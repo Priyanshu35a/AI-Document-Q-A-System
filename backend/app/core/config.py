@@ -38,9 +38,21 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 100
     TOP_K: int = 5
 
+    @property
+    def effective_embedding_model(self) -> str:
+        # On Render Free Tier (512MB RAM limit), default to zero-RAM Gemini API embeddings
+        if os.getenv("RENDER"):
+            return "gemini-embedding-001"
+        return self.EMBEDDING_MODEL_NAME
+
     def get_database_url(self) -> str:
         if self.DATABASE_URL and self.DATABASE_URL.strip():
+            # If default docker-compose postgres URL is passed on Render or standalone, use SQLite
+            if "postgres:5432" in self.DATABASE_URL and (os.getenv("RENDER") or not os.path.exists("/.dockerenv")):
+                return "sqlite:///./rag.db"
             return self.DATABASE_URL
+        if os.getenv("RENDER") or not os.path.exists("/.dockerenv"):
+            return "sqlite:///./rag.db"
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 settings = Settings()

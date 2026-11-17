@@ -33,7 +33,7 @@ def health_check(db: Session = Depends(get_db)):
         "app_name": settings.PROJECT_NAME,
         "database": db_status,
         "faiss_index": faiss_status,
-        "embedding_model": settings.EMBEDDING_MODEL_NAME
+        "embedding_model": settings.effective_embedding_model
     }
 
 @router.get("/llm")

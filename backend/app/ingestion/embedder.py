@@ -30,7 +30,7 @@ class Embedder:
         return cls._instance
 
     def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name or settings.EMBEDDING_MODEL_NAME
+        self.model_name = model_name or settings.effective_embedding_model
 
     def _ensure_gemini_client(self):
         if self._client is None:

@@ -13,48 +13,64 @@ class FAISSVectorStore:
     Thread-safe FAISS vector index manager using IndexIDMap2 and IndexFlatIP.
     Supports cosine similarity search via normalized embeddings, explicit ID assignment,
     ID removal, and disk persistence.
+    Uses lazy loading to avoid loading heavy models during server boot.
     """
 
     def __init__(self, index_path: Optional[str] = None, dimension: Optional[int] = None):
         self._lock = threading.Lock()
         self.index_path = index_path or settings.FAISS_INDEX_PATH
-        if dimension is None:
-            try:
-                from app.ingestion.embedder import embedder
-                self.dimension = embedder.dimension
-            except Exception:
-                self.dimension = 384
-        else:
-            self.dimension = dimension
+        self._dimension = dimension
         self.index: Optional[faiss.Index] = None
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is not None:
+            return self._dimension
+        try:
+            from app.ingestion.embedder import embedder
+            return embedder.dimension
+        except Exception:
+            return 384
+
+    @dimension.setter
+    def dimension(self, value: int):
+        self._dimension = value
+
+    def _ensure_index_loaded(self):
+        """Lazy loader: loads or creates index only when first needed."""
+        if self.index is not None:
+            return
         self._load_or_create_index()
 
     def _load_or_create_index(self):
         """Loads index from disk or creates a new one if not found or dimension mismatch."""
         os.makedirs(os.path.dirname(self.index_path) or ".", exist_ok=True)
+        dim = self.dimension
         if os.path.exists(self.index_path):
             try:
                 logger.info(f"Loading FAISS index from {self.index_path}...")
                 loaded_index = faiss.read_index(self.index_path)
-                if loaded_index.d == self.dimension:
+                if loaded_index.d == dim:
                     self.index = loaded_index
                     logger.info(f"FAISS index loaded. Total vectors: {self.index.ntotal}")
                     return
                 else:
                     logger.warning(
-                        f"Existing FAISS index dimension {loaded_index.d} does not match expected {self.dimension}. "
+                        f"Existing FAISS index dimension {loaded_index.d} does not match expected {dim}. "
                         "Recreating index for updated embedding model."
                     )
             except Exception as e:
                 logger.error(f"Failed to read existing FAISS index: {e}. Creating new index.")
 
-        logger.info(f"Creating new FAISS IndexIDMap2 with dimension {self.dimension}...")
-        sub_index = faiss.IndexFlatIP(self.dimension)
+        logger.info(f"Creating new FAISS IndexIDMap2 with dimension {dim}...")
+        sub_index = faiss.IndexFlatIP(dim)
         self.index = faiss.IndexIDMap2(sub_index)
         self._save_index()
 
     def _save_index(self):
         """Persists FAISS index to disk."""
+        if self.index is None:
+            return
         try:
             faiss.write_index(self.index, self.index_path)
             logger.info(f"FAISS index saved to {self.index_path} ({self.index.ntotal} vectors).")
@@ -69,6 +85,7 @@ class FAISSVectorStore:
             return
 
         with self._lock:
+            self._ensure_index_loaded()
             id_array = np.array(ids, dtype=np.int64)
             if self.index.d != vectors.shape[1]:
                 logger.warning(
@@ -89,6 +106,7 @@ class FAISSVectorStore:
             return
 
         with self._lock:
+            self._ensure_index_loaded()
             try:
                 id_array = np.array(ids, dtype=np.int64)
                 self.index.remove_ids(id_array)
@@ -102,6 +120,7 @@ class FAISSVectorStore:
         Searches the index for the top-k most similar vectors.
         """
         with self._lock:
+            self._ensure_index_loaded()
             if not self.index or self.index.ntotal == 0:
                 return [], []
 
@@ -130,6 +149,7 @@ class FAISSVectorStore:
     @property
     def total_vectors(self) -> int:
         with self._lock:
+            self._ensure_index_loaded()
             return self.index.ntotal if self.index else 0
 
 # Default global instance
