@@ -98,6 +98,9 @@ export default function App() {
 
   // Chat & Document State
   const [health, setHealth] = useState(null);
+  const isBackendOnline = Boolean(
+    health && (health.status === 'online' || health.status === 'healthy')
+  );
   const [documents, setDocuments] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState('all');
   const [messages, setMessages] = useState([]);
@@ -698,9 +701,9 @@ export default function App() {
               }}
             >
               <div className="status-indicator">
-                <span className={`status-dot ${health?.status === 'healthy' ? 'online' : 'offline'}`} />
+                <span className={`status-dot ${isBackendOnline ? 'online' : 'offline'}`} />
                 <span className="status-text">
-                  {health?.status === 'healthy' ? 'Backend API: Connected' : 'Backend API: Offline / Unset'}
+                  {isBackendOnline ? 'Backend API: Connected' : 'Backend API: Offline / Unset'}
                 </span>
               </div>
               <div className="toggle-label">
@@ -791,16 +794,16 @@ export default function App() {
         <div className="header-right">
           {/* Server Connection Badge */}
           <button
-            className={`header-server-badge ${health?.status === 'healthy' ? 'online' : 'offline'}`}
+            className={`header-server-badge ${isBackendOnline ? 'online' : 'offline'}`}
             onClick={() => {
               setTempBackendUrl(backendUrl);
               setShowServerConfig(true);
             }}
             title="Click to check or configure Backend API"
           >
-            <span className={`status-dot ${health?.status === 'healthy' ? 'online' : 'offline'}`} />
+            <span className={`status-dot ${isBackendOnline ? 'online' : 'offline'}`} />
             <span className="header-server-label">
-              {health?.status === 'healthy' ? 'Backend Live' : 'Backend Offline'}
+              {isBackendOnline ? 'Backend Live' : 'Backend Offline'}
             </span>
           </button>
 
@@ -1373,8 +1376,8 @@ export default function App() {
               <div style={{ marginBottom: '1rem' }}>
                 <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                   <span>API Base URL</span>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: health?.status === 'healthy' ? '#10b981' : '#f59e0b' }}>
-                    {health?.status === 'healthy' ? '● Online & Responsive' : '○ Offline / Unreachable'}
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isBackendOnline ? '#10b981' : '#f59e0b' }}>
+                    {isBackendOnline ? '● Online & Responsive' : '○ Offline / Unreachable'}
                   </span>
                 </label>
                 <div className="form-input-wrap">

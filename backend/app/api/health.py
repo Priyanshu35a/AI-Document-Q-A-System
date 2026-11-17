@@ -30,6 +30,7 @@ def health_check(db: Session = Depends(get_db)):
 
     return {
         "status": "online",
+        "healthy": True,
         "app_name": settings.PROJECT_NAME,
         "database": db_status,
         "faiss_index": faiss_status,
