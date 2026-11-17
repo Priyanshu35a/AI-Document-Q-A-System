@@ -73,9 +73,6 @@ async def lifespan(app: FastAPI):
     # Initialize Database
     init_db_with_retry()
 
-    # Pre-warm embedding model in background so user's first query has 0 cold-start delay
-    threading.Thread(target=_warmup_embedder, daemon=True).start()
-
     logger.info("FastAPI backend started successfully.")
     yield
     logger.info("FastAPI backend shutting down.")
