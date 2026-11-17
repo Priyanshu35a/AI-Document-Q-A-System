@@ -22,7 +22,12 @@ import {
   FileText,
   Copy,
   ExternalLink,
-  X
+  X,
+  Settings,
+  Server,
+  Wifi,
+  WifiOff,
+  Check
 } from 'lucide-react';
 
 export default function App() {
@@ -35,6 +40,49 @@ export default function App() {
       return null;
     }
   });
+
+  // Backend API URL Configuration
+  const [backendUrl, setBackendUrl] = useState(() => {
+    return (
+      localStorage.getItem('rag_backend_url') ||
+      import.meta.env.VITE_BACKEND_URL ||
+      import.meta.env.VITE_API_URL ||
+      ''
+    );
+  });
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [tempBackendUrl, setTempBackendUrl] = useState(backendUrl);
+  const [serverSaveSuccess, setServerSaveSuccess] = useState(false);
+
+  const saveBackendUrl = (newUrl) => {
+    const trimmed = (newUrl || '').trim().replace(/\/$/, '');
+    setBackendUrl(trimmed);
+    if (trimmed) {
+      localStorage.setItem('rag_backend_url', trimmed);
+    } else {
+      localStorage.removeItem('rag_backend_url');
+    }
+    setServerSaveSuccess(true);
+    setTimeout(() => setServerSaveSuccess(false), 2000);
+    fetchHealth(trimmed);
+  };
+
+  const apiUrl = (path, overrideBase = null) => {
+    const base = (overrideBase !== null ? overrideBase : backendUrl).replace(/\/$/, '');
+    if (!base) return path;
+    return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  };
+
+  // Safe JSON extraction helper
+  const safeJson = async (res) => {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
 
   // Auth Modal State
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
@@ -72,13 +120,19 @@ export default function App() {
   const fileInputRef = useRef(null);
 
   // Authenticated fetch wrapper
-  const authFetch = (url, options = {}) => {
+  const authFetch = (path, options = {}) => {
+    const url = path.startsWith('http') ? path : apiUrl(path);
     const headers = {
       ...(options.headers || {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
     return fetch(url, { ...options, headers });
   };
+
+  // Check health on mount and backendUrl changes
+  useEffect(() => {
+    fetchHealth();
+  }, [backendUrl]);
 
   // Initial Load when token is present
   useEffect(() => {
@@ -88,7 +142,7 @@ export default function App() {
       fetchChatHistory();
       fetchSheetData();
     }
-  }, [token]);
+  }, [token, backendUrl]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -110,13 +164,22 @@ export default function App() {
           ? { username: authUsername.trim(), email: authEmail.trim(), password: authPassword }
           : { identifier: authEmail.trim(), password: authPassword };
 
-      const res = await fetch(endpoint, {
+      const res = await fetch(apiUrl(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data;
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        throw new Error(
+          `Unable to reach backend API (status ${res.status}). If deployed on Netlify, configure your backend server URL in the "Server Settings" below.`
+        );
+      }
+
       if (!res.ok) {
         throw new Error(data.detail || 'Authentication failed');
       }
@@ -150,15 +213,17 @@ export default function App() {
     setSheetChunks([]);
   };
 
-  const fetchHealth = async () => {
+  const fetchHealth = async (customBase = null) => {
     try {
-      const res = await fetch('/api/health');
-      if (res.ok) {
-        const data = await res.json();
+      const res = await fetch(apiUrl('/api/health', customBase));
+      const data = await safeJson(res);
+      if (res.ok && data) {
         setHealth(data);
+      } else {
+        setHealth({ status: 'unreachable' });
       }
     } catch (err) {
-      console.error('Health fetch failed:', err);
+      setHealth({ status: 'unreachable' });
     }
   };
 
@@ -170,8 +235,8 @@ export default function App() {
         return;
       }
       if (res.ok) {
-        const data = await res.json();
-        setDocuments(data);
+        const data = await safeJson(res);
+        if (data) setDocuments(data);
       }
     } catch (err) {
       console.error('Failed to fetch documents:', err);
@@ -182,8 +247,8 @@ export default function App() {
     try {
       const res = await authFetch('/api/chat/history');
       if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
+        const data = await safeJson(res);
+        if (data) setMessages(data);
       }
     } catch (err) {
       console.error('Failed to fetch chat history:', err);
@@ -199,11 +264,17 @@ export default function App() {
         authFetch(`/api/sheets/chunks?search=${encodeURIComponent(sheetSearch)}`)
       ]);
 
-      if (sumRes.ok) setSheetSummary(await sumRes.json());
-      if (docsRes.ok) setSheetDocs(await docsRes.json());
+      if (sumRes.ok) {
+        const data = await safeJson(sumRes);
+        if (data) setSheetSummary(data);
+      }
+      if (docsRes.ok) {
+        const data = await safeJson(docsRes);
+        if (data) setSheetDocs(data);
+      }
       if (chunksRes.ok) {
-        const cData = await chunksRes.json();
-        setSheetChunks(cData.rows || []);
+        const cData = await safeJson(chunksRes);
+        if (cData) setSheetChunks(cData.rows || []);
       }
     } catch (err) {
       console.error('Error fetching sheet data:', err);
@@ -615,6 +686,70 @@ export default function App() {
               {authLoading ? 'Please wait...' : authMode === 'signup' ? 'Create Free Workspace' : 'Sign In'}
             </button>
           </form>
+
+          {/* Backend Connection & Configuration Panel for Netlify / Remote Host */}
+          <div className="auth-server-toggle-wrap">
+            <button
+              type="button"
+              className="auth-server-toggle-btn"
+              onClick={() => {
+                setTempBackendUrl(backendUrl);
+                setShowServerConfig(!showServerConfig);
+              }}
+            >
+              <div className="status-indicator">
+                <span className={`status-dot ${health?.status === 'healthy' ? 'online' : 'offline'}`} />
+                <span className="status-text">
+                  {health?.status === 'healthy' ? 'Backend API: Connected' : 'Backend API: Offline / Unset'}
+                </span>
+              </div>
+              <div className="toggle-label">
+                <Settings size={13} />
+                <span>{showServerConfig ? 'Close Settings' : 'Configure API'}</span>
+              </div>
+            </button>
+
+            {showServerConfig && (
+              <div className="auth-server-panel">
+                <div className="server-panel-header">
+                  <span className="server-panel-title">FastAPI Backend URL</span>
+                  {serverSaveSuccess && <span className="server-saved-badge"><Check size={12} /> Saved</span>}
+                </div>
+                <p className="server-panel-sub">
+                  If running on Netlify, specify your deployed backend URL (e.g. Render, Railway, fly.io, or local tunnel).
+                </p>
+                <div className="form-input-wrap" style={{ marginTop: '0.4rem', marginBottom: '0.5rem' }}>
+                  <Server size={14} className="form-input-icon" />
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="https://your-backend.onrender.com (or leave empty for default)"
+                    value={tempBackendUrl}
+                    onChange={(e) => setTempBackendUrl(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="auth-btn-subtle"
+                    onClick={() => {
+                      setTempBackendUrl('');
+                      saveBackendUrl('');
+                    }}
+                  >
+                    Reset (Default)
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-btn-action"
+                    onClick={() => saveBackendUrl(tempBackendUrl)}
+                  >
+                    Save & Test
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -654,6 +789,21 @@ export default function App() {
 
         {/* Header Right Profile */}
         <div className="header-right">
+          {/* Server Connection Badge */}
+          <button
+            className={`header-server-badge ${health?.status === 'healthy' ? 'online' : 'offline'}`}
+            onClick={() => {
+              setTempBackendUrl(backendUrl);
+              setShowServerConfig(true);
+            }}
+            title="Click to check or configure Backend API"
+          >
+            <span className={`status-dot ${health?.status === 'healthy' ? 'online' : 'offline'}`} />
+            <span className="header-server-label">
+              {health?.status === 'healthy' ? 'Backend Live' : 'Backend Offline'}
+            </span>
+          </button>
+
           <div className="user-badge">
             <div className="user-avatar-circle">
               {user.username ? user.username.charAt(0).toUpperCase() : 'U'}
@@ -1191,6 +1341,88 @@ export default function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Backend Server Configuration Modal for Authenticated Session */}
+      {showServerConfig && token && (
+        <div className="cell-modal-backdrop" onClick={() => setShowServerConfig(false)}>
+          <div
+            className="cell-modal-card"
+            style={{ maxWidth: '480px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cell-modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Server size={18} style={{ color: 'var(--primary-color)' }} />
+                <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>Backend API Connection</span>
+              </div>
+              <button
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                onClick={() => setShowServerConfig(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="cell-modal-content" style={{ padding: '1rem', maxHeight: 'none' }}>
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: '0.85rem', lineHeight: 1.5 }}>
+                When running on Netlify, connect your frontend to your deployed FastAPI backend (e.g. Render, Railway, fly.io, or local tunnel).
+              </p>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                  <span>API Base URL</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: health?.status === 'healthy' ? '#10b981' : '#f59e0b' }}>
+                    {health?.status === 'healthy' ? '● Online & Responsive' : '○ Offline / Unreachable'}
+                  </span>
+                </label>
+                <div className="form-input-wrap">
+                  <Server size={15} className="form-input-icon" />
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="https://your-backend.onrender.com (or empty for default)"
+                    value={tempBackendUrl}
+                    onChange={(e) => setTempBackendUrl(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {serverSaveSuccess && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#10b981', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                  <Check size={14} />
+                  <span>Settings updated successfully!</span>
+                </div>
+              )}
+            </div>
+
+            <div className="cell-modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                className="sheet-btn"
+                onClick={() => {
+                  setTempBackendUrl('');
+                  saveBackendUrl('');
+                }}
+              >
+                Reset Default
+              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="sheet-btn" onClick={() => setShowServerConfig(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="sheet-btn primary"
+                  onClick={() => {
+                    saveBackendUrl(tempBackendUrl);
+                    setTimeout(() => setShowServerConfig(false), 500);
+                  }}
+                >
+                  Save & Reconnect
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </>
