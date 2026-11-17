@@ -170,6 +170,12 @@ def ask_question_stream(
     doc_id = request.document_id
 
     total_docs = db.query(Document).filter(Document.user_id == user_id).count()
+    sse_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
+    }
+
     if total_docs == 0:
         def empty_gen():
             payload = {
@@ -177,16 +183,27 @@ def ask_question_stream(
                 "message": "No documents uploaded yet. Please upload a PDF before asking questions."
             }
             yield f"data: {json.dumps(payload)}\n\n"
-        return StreamingResponse(empty_gen(), media_type="text/event-stream")
+        return StreamingResponse(empty_gen(), media_type="text/event-stream", headers=sse_headers)
 
     # 1. Retrieve chunks
-    chunks = retriever.retrieve_chunks(
-        query=question,
-        db=db,
-        document_id=doc_id,
-        user_id=user_id,
-        top_k=settings.TOP_K
-    )
+    try:
+        chunks = retriever.retrieve_chunks(
+            query=question,
+            db=db,
+            document_id=doc_id,
+            user_id=user_id,
+            top_k=settings.TOP_K
+        )
+    except Exception as ret_err:
+        logger.error(f"Error during chunk retrieval: {ret_err}")
+        def err_gen():
+            payload = {
+                "type": "error",
+                "message": f"Search error: {str(ret_err)}"
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+        return StreamingResponse(err_gen(), media_type="text/event-stream", headers=sse_headers)
+
     t_retrieved = time.perf_counter()
     retrieval_ms = round((t_retrieved - t_start) * 1000, 2)
 
@@ -208,7 +225,7 @@ def ask_question_stream(
                 "message": "I cannot find any relevant passages in your uploaded documents."
             }
             yield f"data: {json.dumps(payload)}\n\n"
-        return StreamingResponse(no_chunk_gen(), media_type="text/event-stream")
+        return StreamingResponse(no_chunk_gen(), media_type="text/event-stream", headers=sse_headers)
 
     def sse_event_stream():
         # Step A: Emit metadata event (citations & retrieval latency)

@@ -122,7 +122,7 @@ class Embedder:
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec = vec / norm
-            return vec
+            return np.expand_dims(vec, axis=0)
 
         embeddings = self._model.encode(
             [query],

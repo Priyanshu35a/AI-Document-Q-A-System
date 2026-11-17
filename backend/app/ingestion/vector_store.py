@@ -124,6 +124,9 @@ class FAISSVectorStore:
             if not self.index or self.index.ntotal == 0:
                 return [], []
 
+            if query_vector.ndim == 1:
+                query_vector = np.expand_dims(query_vector, axis=0)
+
             if self.index.d != query_vector.shape[1]:
                 logger.warning(f"Search dimension mismatch: Index has {self.index.d}, query has {query_vector.shape[1]}")
                 return [], []
